@@ -28,8 +28,8 @@ except ImportError:
     sys.exit(1)
 
 # ─── Connection ───────────────────────────────────────────────────────────────
-SERVER_IP = sys.argv[1] if len(sys.argv) > 1 else '127.0.0.1'
-PORT      = int(sys.argv[2]) if len(sys.argv) > 2 else 5555
+SERVER_IP = '127.0.0.1'
+PORT      = 5555
 
 # ─── Screen ──────────────────────────────────────────────────────────────────
 W, H      = 900, 450
@@ -51,9 +51,6 @@ C = {
     'ptero_hi'  : (105, 80,  150),
     'egg'       : (255, 242, 175),
     'egg_hi'    : (255, 215, 80),
-    'doom'      : (45,  12,  8),
-    'doom_edge' : (180, 38,  10),
-    'doom_glow' : (230, 90,  30),
     'p1'        : (55,  190, 80),
     'p1_hi'     : (130, 240, 140),
     'p2'        : (70,  115, 230),
@@ -78,8 +75,10 @@ _player_id   = None
 
 
 # ─── Network Receiver Thread ─────────────────────────────────────────────────
+_can_send = False # Global flag to gate transmission
+
 def net_thread(sock):
-    global _latest_st, _player_id
+    global _latest_st, _player_id, _can_send
     buf = ''
     while True:
         try:
@@ -97,6 +96,10 @@ def net_thread(sock):
                     if 'welcome' in msg:
                         _player_id = int(msg['welcome'])
                         print(f'[client] Assigned as Player {_player_id + 1}')
+                    # NEW: Catch the synchronization signal
+                    elif msg.get('status') == 'ready':
+                        _can_send = True
+                        print('[client] Both players connected. Input stream active.')
                     else:
                         with _lock:
                             _latest_st = msg
@@ -297,42 +300,6 @@ def draw_egg(surf, x, y, w, h, ft):
     pygame.draw.ellipse(surf, C['white'],  (ix + 5, iy + 4, 5, 3))
     # Spots
     pygame.draw.circle(surf, C['egg_hi'],  (ix + w // 2, iy + h - 6), 3)
-
-
-# ─── Drawing: Avalanche ──────────────────────────────────────────────────────
-def draw_avalanche(surf, aval_x, ft):
-    ax = int(aval_x)
-    if ax <= 0:
-        return
-
-    # Fill block
-    pygame.draw.rect(surf, C['doom'], (0, 0, ax, H))
-
-    # Jagged lava edge
-    edge_pts = [(0, 0), (ax, 0)]
-    for yy in range(0, H + 30, 15):
-        jag = int(12 + 9 * math.sin(yy * 0.28 + ft * 0.12))
-        edge_pts.append((ax + jag, yy))
-    edge_pts += [(ax, H), (0, H)]
-    pygame.draw.polygon(surf, (70, 18, 8), edge_pts)
-
-    # Glow layers
-    for i in range(10):
-        alpha = max(0, 200 - i * 20)
-        r     = max(0, 220 - i * 22)
-        g     = max(0, 55  - i * 5)
-        b     = max(0, 18  - i * 2)
-        gx    = ax + i
-        if gx >= 0:
-            pygame.draw.line(surf, (r, g, b), (gx, 0), (gx, H), 2)
-
-    # Dust particles
-    rng = random.Random(ft // 8)
-    for _ in range(6):
-        px = ax + rng.randint(4, 24)
-        py = rng.randint(0, H)
-        pr = rng.randint(2, 6)
-        pygame.draw.circle(surf, C['doom_glow'], (px, py), pr)
 
 
 # ─── Drawing: HUD ────────────────────────────────────────────────────────────
@@ -547,17 +514,17 @@ def main():
         print(f'[client] Could not connect to {SERVER_IP}:{PORT} — is the server running?')
         sys.exit(1)
 
-    print('[client] Connected!  Waiting for player assignment…')
+    print('[client] Connected! Waiting for player assignment…')
     t = threading.Thread(target=net_thread, args=(sock,), daemon=True)
     t.start()
 
-    # Wait up to 5 s for player-id assignment
+    # Wait for player-id assignment
     for _ in range(100):
         if _player_id is not None:
             break
         time.sleep(0.05)
 
-    # ── Pygame ───────────────────────────────────────────────────────────────
+    # ── Pygame Initialization ────────────────────────────────────────────────
     pygame.init()
     surf   = pygame.display.set_mode((W, H))
     title  = f'Dino Run — Player {_player_id + 1}' if _player_id is not None else 'Dino Run'
@@ -576,10 +543,9 @@ def main():
         tiny = pygame.font.Font(None, 20)
     fonts = (font, big, tiny)
 
-    # ── Per-frame local state ─────────────────────────────────────────────────
     keys_down = set()
     scroll_bg = 0.0
-    ft        = 0         # frame timer for animations
+    ft        = 0         
 
     running = True
     while running:
@@ -606,25 +572,25 @@ def main():
         duck  = d_key in keys_down
         start = pygame.K_SPACE in keys_down
 
+# ── Grab latest game state ────────────────────────────────────────────
+        with _lock:
+            st = _latest_st
+
+        # ── Render Logic ──────────────────────────────────────────────────────
+        if st is None:
+            surf.fill((18, 12, 32))
+            wait = font.render('Waiting for other player…', True, C['grey'])
+            surf.blit(wait, (W // 2 - wait.get_width() // 2, H // 2))
+            pygame.display.flip()
+            continue  # <--- ברגע שזה רץ, אנחנו חוזרים לתחילת הלולאה ולא מגיעים לשליחה
+
         # ── Send input to server ──────────────────────────────────────────────
+        # נגיע לכאן ונתחיל לשלוח קלט רק אחרי ששחקן 2 התחבר והשרת התחיל לשלוח נתונים
         msg = json.dumps({'j': jump, 'd': duck, 'start': start}).encode() + b'\n'
         try:
             sock.sendall(msg)
         except OSError:
             pass
-
-        # ── Grab latest game state ────────────────────────────────────────────
-        with _lock:
-            st = _latest_st
-
-        # ── Render ────────────────────────────────────────────────────────────
-        if st is None:
-            # Still connecting
-            surf.fill((18, 12, 32))
-            wait = font.render('Connecting to server…', True, C['grey'])
-            surf.blit(wait, (W // 2 - wait.get_width() // 2, H // 2))
-            pygame.display.flip()
-            continue
 
         phase = st.get('phase', 'splash')
 
@@ -633,38 +599,27 @@ def main():
         else:
             spd = st.get('speed', INIT_SPEED)
             scroll_bg += spd
-
             draw_background(surf, scroll_bg, ft)
 
-            # ── Eggs ──────────────────────────────────────────────────────────
             for e in st.get('eggs', []):
                 taken = e.get('taken', [False, False])
-                # Draw only if not taken by at least one player (both players share view)
                 if not (taken[0] and taken[1]):
-                    alpha = 0.5 if (taken[0] or taken[1]) else 1.0
                     draw_egg(surf, e['x'], e['y'], e['w'], e['h'], ft)
 
-            # ── Obstacles ────────────────────────────────────────────────────
             for o in st.get('obstacles', []):
                 if o['kind'] == 'rock':
                     draw_rock(surf, o['x'], o['y'], o['w'], o['h'])
                 else:
                     draw_ptero(surf, o['x'], o['y'], o['w'], o['h'], ft)
 
-            # ── Players ───────────────────────────────────────────────────────
             for p in st.get('players', []):
                 draw_dino(surf, p['sx'], p['y'], p['ducking'],
                           p['id'], dead=not p['alive'], step=ft)
-                # Player label above dino
                 lbl = tiny.render(f'P{p["id"]+1}', True, DINO_COLS[p['id']][0])
                 surf.blit(lbl, (int(p['sx']) + 10, int(p['y']) - 72))
 
-            # ── Avalanche ────────────────────────────────────────────────────
-
-            # ── HUD ───────────────────────────────────────────────────────────
             draw_hud(surf, fonts, st, pid)
 
-            # ── Phase overlays ────────────────────────────────────────────────
             if phase == 'round_end':
                 draw_round_end(surf, fonts, st)
             elif phase == 'game_over':
