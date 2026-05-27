@@ -31,13 +31,7 @@ JUMP_V      = -15.5
 INIT_SPEED  = 5.0
 MAX_SPEED   = 13.0
 SPEED_INC   = 0.0016        # px per frame² speed increase
-
-# ─── Avalanche ───────────────────────────────────────────────────────────────
-# --- Lines 41-55 in server.py ---
-# AVALANCHE DISABLED (The "Lava Wall" will never reach players)
-AVAL_X0     = -9999.0  
-AVAL_BASE   = 0.0      
-AVAL_ACC    = 0.0      
+     
 
 # PLAYER LAYOUT (P1 is no longer "trapped" by the wall)
 P1_SX, P2_SX = 110, 185 
@@ -68,7 +62,7 @@ PTERO_Y     = GROUND_Y - 58   # must duck to avoid
 EGG_W       = 20
 EGG_H       = 26
 
-PORT        = int(sys.argv[1]) if len(sys.argv) > 1 else 5555
+PORT        = 5555
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -165,7 +159,6 @@ class Game:
         self.obstacles = []
         self.eggs      = []
         self.speed     = INIT_SPEED
-        self.aval_x    = AVAL_X0
         self.frame     = 0
         self.delay     = 0          # countdown timer (frames)
         # Spawn timers (distance remaining until next spawn, in px)
@@ -198,7 +191,6 @@ class Game:
         f           = self.frame
         self.frame += 1
         self.speed  = min(MAX_SPEED, INIT_SPEED + f * SPEED_INC)
-        self.aval_x += AVAL_BASE + f * AVAL_ACC
 
         # ── Spawn obstacles ──────────────────────────────────────────────────
         self.next_obs -= self.speed
@@ -231,11 +223,6 @@ class Game:
         for p in self.players:
             p.update()
             if not p.alive:
-                continue
-
-            # Caught by avalanche?
-            if self.aval_x >= p.sx:
-                p.alive = False
                 continue
 
             pr = p.rect()
@@ -279,7 +266,6 @@ class Game:
             'wins'     : self.wins[:],
             'round'    : self.round_num,
             'speed'    : round(self.speed, 2),
-            'aval_x'   : round(self.aval_x, 1),
             'players'  : [p.as_dict()  for p in self.players],
             'obstacles': [o.as_dict()  for o in self.obstacles],
             'eggs'     : [e.as_dict()  for e in self.eggs],
