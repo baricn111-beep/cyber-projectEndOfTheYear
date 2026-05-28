@@ -29,38 +29,38 @@ except ImportError:
 
 # ─── Connection ───────────────────────────────────────────────────────────────
 SERVER_IP = '127.0.0.1'
-PORT      = 5555
+PORT = 5555
 
 # ─── Screen ──────────────────────────────────────────────────────────────────
-W, H      = 900, 450
-GROUND_Y  = 345
-FPS       = 60
+W, H = 900, 450
+GROUND_Y = 345
+FPS = 60
 INIT_SPEED = 5
 
 # ─── Colour Palette ──────────────────────────────────────────────────────────
 C = {
-    'sky_top'   : (100, 180, 230),
-    'sky_bot'   : (195, 230, 255),
-    'ground'    : (130, 85,  40),
-    'grass'     : (72,  155, 55),
-    'grass2'    : (55,  130, 40),
-    'rock'      : (115, 96,  74),
-    'rock_hi'   : (148, 126, 100),
-    'rock_sh'   : (82,  66,  50),
-    'ptero'     : (75,  55,  110),
-    'ptero_hi'  : (105, 80,  150),
-    'egg'       : (255, 242, 175),
-    'egg_hi'    : (255, 215, 80),
-    'p1'        : (55,  190, 80),
-    'p1_hi'     : (130, 240, 140),
-    'p2'        : (70,  115, 230),
-    'p2_hi'     : (130, 170, 255),
-    'white'     : (255, 255, 255),
-    'black'     : (0,   0,   0),
-    'gold'      : (255, 215, 0),
-    'red'       : (220, 60,  60),
-    'grey'      : (160, 160, 160),
-    'overlay'   : (0,   0,   0),
+    'sky_top': (100, 180, 230),
+    'sky_bot': (195, 230, 255),
+    'ground': (130, 85,  40),
+    'grass': (72,  155, 55),
+    'grass2': (55,  130, 40),
+    'rock': (115, 96,  74),
+    'rock_hi': (148, 126, 100),
+    'rock_sh': (82,  66,  50),
+    'ptero': (75,  55,  110),
+    'ptero_hi': (105, 80,  150),
+    'egg': (255, 242, 175),
+    'egg_hi': (255, 215, 80),
+    'p1': (55,  190, 80),
+    'p1_hi': (130, 240, 140),
+    'p2': (70,  115, 230),
+    'p2_hi': (130, 170, 255),
+    'white': (255, 255, 255),
+    'black': (0,   0,   0),
+    'gold': (255, 215, 0),
+    'red': (220, 60,  60),
+    'grey': (160, 160, 160),
+    'overlay': (0,   0,   0),
 }
 
 DINO_COLS = [
@@ -69,13 +69,14 @@ DINO_COLS = [
 ]
 
 # ─── Shared State (written by network thread, read by render thread) ──────────
-_lock        = threading.Lock()
-_latest_st   = None
-_player_id   = None
+_lock = threading.Lock()
+_latest_st = None
+_player_id = None
 
 
 # ─── Network Receiver Thread ─────────────────────────────────────────────────
-_can_send = False # Global flag to gate transmission
+_can_send = False  # Global flag to gate transmission
+
 
 def net_thread(sock):
     global _latest_st, _player_id, _can_send
@@ -99,7 +100,8 @@ def net_thread(sock):
                     # NEW: Catch the synchronization signal
                     elif msg.get('status') == 'ready':
                         _can_send = True
-                        print('[client] Both players connected. Input stream active.')
+                        print(
+                            '[client] Both players connected. Input stream active.')
                     else:
                         with _lock:
                             _latest_st = msg
@@ -112,6 +114,7 @@ def net_thread(sock):
 # ─── Drawing: Background ─────────────────────────────────────────────────────
 _sky_surf = None
 
+
 def _build_sky():
     global _sky_surf
     _sky_surf = pygame.Surface((W, GROUND_Y))
@@ -119,7 +122,7 @@ def _build_sky():
     for y in range(GROUND_Y):
         r = t[0] + (b[0] - t[0]) * y // GROUND_Y
         g = t[1] + (b[1] - t[1]) * y // GROUND_Y
-        bl= t[2] + (b[2] - t[2]) * y // GROUND_Y
+        bl = t[2] + (b[2] - t[2]) * y // GROUND_Y
         pygame.draw.line(_sky_surf, (r, g, bl), (0, y), (W, y))
 
 
@@ -167,7 +170,7 @@ def draw_dino(surf, sx, y, ducking, pid, dead=False, step=0):
     base, hi = DINO_COLS[pid]
     if dead:
         base = tuple(min(255, c + 90) for c in base)
-        hi   = base
+        hi = base
 
     bx = int(sx)
     by = int(y)
@@ -179,7 +182,8 @@ def draw_dino(surf, sx, y, ducking, pid, dead=False, step=0):
         pygame.draw.rect(surf, base, (bx, by - 28, 38, 24), border_radius=7)
         pygame.draw.rect(surf, hi,   (bx + 4, by - 26, 16, 8), border_radius=3)
         # Head
-        pygame.draw.rect(surf, base, (bx + 20, by - 36, 22, 18), border_radius=5)
+        pygame.draw.rect(surf, base, (bx + 20, by -
+                         36, 22, 18), border_radius=5)
         # Snout
         pygame.draw.rect(surf, base, (bx + 36, by - 32, 8, 8), border_radius=3)
         # Eye
@@ -189,8 +193,10 @@ def draw_dino(surf, sx, y, ducking, pid, dead=False, step=0):
         pygame.draw.circle(surf, C['rock'],  (bx + 40, by - 28), 1)
         # Legs (short)
         leg_bob = int(math.sin(step * 0.35) * 2)
-        pygame.draw.rect(surf, base, (bx + 4,  by - 6 + leg_bob, 9, 8), border_radius=2)
-        pygame.draw.rect(surf, base, (bx + 18, by - 6 - leg_bob, 9, 8), border_radius=2)
+        pygame.draw.rect(surf, base, (bx + 4,  by - 6 +
+                         leg_bob, 9, 8), border_radius=2)
+        pygame.draw.rect(surf, base, (bx + 18, by - 6 -
+                         leg_bob, 9, 8), border_radius=2)
         # Feet
         pygame.draw.rect(surf, hi,   (bx + 2,  by - 1, 12, 3), border_radius=1)
         pygame.draw.rect(surf, hi,   (bx + 16, by - 1, 12, 3), border_radius=1)
@@ -202,12 +208,16 @@ def draw_dino(surf, sx, y, ducking, pid, dead=False, step=0):
                     (bx + 4,  by - 18)]
         pygame.draw.polygon(surf, base, tail_pts)
         # Body
-        pygame.draw.rect(surf, base, (bx + 4,  by - 40, 26, 32), border_radius=7)
-        pygame.draw.rect(surf, hi,   (bx + 8,  by - 38, 10, 12), border_radius=3)
+        pygame.draw.rect(surf, base, (bx + 4,  by -
+                         40, 26, 32), border_radius=7)
+        pygame.draw.rect(surf, hi,   (bx + 8,  by -
+                         38, 10, 12), border_radius=3)
         # Head
-        pygame.draw.rect(surf, base, (bx + 14, by - 54, 24, 22), border_radius=6)
+        pygame.draw.rect(surf, base, (bx + 14, by -
+                         54, 24, 22), border_radius=6)
         # Snout
-        pygame.draw.rect(surf, base, (bx + 30, by - 50, 10, 10), border_radius=3)
+        pygame.draw.rect(surf, base, (bx + 30, by -
+                         50, 10, 10), border_radius=3)
         # Eye
         pygame.draw.circle(surf, C['white'], (bx + 30, by - 47), 4)
         pygame.draw.circle(surf, C['black'], (bx + 31, by - 47), 2)
@@ -215,11 +225,15 @@ def draw_dino(surf, sx, y, ducking, pid, dead=False, step=0):
         # Nostril
         pygame.draw.circle(surf, C['rock'],  (bx + 37, by - 44), 1)
         # Arm
-        pygame.draw.rect(surf, base, (bx + 20, by - 32, 12, 6), border_radius=2)
-        pygame.draw.rect(surf, hi,   (bx + 29, by - 32, 5,  5), border_radius=1)
+        pygame.draw.rect(surf, base, (bx + 20, by -
+                         32, 12, 6), border_radius=2)
+        pygame.draw.rect(surf, hi,   (bx + 29, by -
+                         32, 5,  5), border_radius=1)
         # Legs
-        pygame.draw.rect(surf, base, (bx + 4,  by - 12 + leg_bob, 11, 14), border_radius=3)
-        pygame.draw.rect(surf, base, (bx + 18, by - 12 - leg_bob, 11, 14), border_radius=3)
+        pygame.draw.rect(surf, base, (bx + 4,  by - 12 +
+                         leg_bob, 11, 14), border_radius=3)
+        pygame.draw.rect(surf, base, (bx + 18, by - 12 -
+                         leg_bob, 11, 14), border_radius=3)
         # Feet
         pygame.draw.rect(surf, hi,   (bx + 2,  by - 1, 14, 4), border_radius=2)
         pygame.draw.rect(surf, hi,   (bx + 16, by - 1, 14, 4), border_radius=2)
@@ -241,15 +255,20 @@ def draw_rock(surf, x, y, w, h):
     # Main Trunk
     pygame.draw.rect(surf, green, (ix + w//3, iy, w//3, h), border_radius=4)
     # Highlight on trunk
-    pygame.draw.rect(surf, (100, 200, 80), (ix + w//3 + 2, iy + 4, 3, h - 8), border_radius=2)
-    
+    pygame.draw.rect(surf, (100, 200, 80), (ix + w//3 + 2,
+                     iy + 4, 3, h - 8), border_radius=2)
+
     # Left Arm
-    pygame.draw.rect(surf, green, (ix, iy + h//3, w//3, h//4), border_radius=3) # Horizontal part
-    pygame.draw.rect(surf, green, (ix, iy + h//6, w//4, h//4), border_radius=3) # Vertical part
-    
+    pygame.draw.rect(surf, green, (ix, iy + h//3, w//3, h//4),
+                     border_radius=3)  # Horizontal part
+    pygame.draw.rect(surf, green, (ix, iy + h//6, w//4, h//4),
+                     border_radius=3)  # Vertical part
+
     # Right Arm
-    pygame.draw.rect(surf, green, (ix + 2*w//3, iy + h//2, w//3, h//4), border_radius=3) # Horizontal
-    pygame.draw.rect(surf, green, (ix + 3*w//4, iy + h//4, w//4, h//3), border_radius=3) # Vertical
+    pygame.draw.rect(surf, green, (ix + 2*w//3, iy + h//2, w //
+                     3, h//4), border_radius=3)  # Horizontal
+    pygame.draw.rect(surf, green, (ix + 3*w//4, iy + h//4, w //
+                     4, h//3), border_radius=3)  # Vertical
 
     # Ground Shadow
     pygame.draw.ellipse(surf, (0, 0, 0, 40), (ix, iy + h - 5, w, 10))
@@ -258,8 +277,8 @@ def draw_rock(surf, x, y, w, h):
 # ─── Drawing: Pterodactyl ────────────────────────────────────────────────────
 def draw_ptero(surf, x, y, w, h, ft):
     flap = math.sin(ft * 0.18) * 10
-    cx   = int(x + w // 2)
-    gy   = int(y + h // 2)
+    cx = int(x + w // 2)
+    gy = int(y + h // 2)
 
     # Wing shadows
     pygame.draw.polygon(surf, C['rock_sh'], [
@@ -289,8 +308,8 @@ def draw_ptero(surf, x, y, w, h, ft):
 # ─── Drawing: Egg ────────────────────────────────────────────────────────────
 def draw_egg(surf, x, y, w, h, ft):
     ix, iy = int(x), int(y)
-    bob  = int(math.sin(ft * 0.07) * 3)
-    iy  -= bob
+    bob = int(math.sin(ft * 0.07) * 3)
+    iy -= bob
     # Shadow
     pygame.draw.ellipse(surf, (90, 64, 24), (ix + 2, iy + h - 4, w - 2, 6))
     # Body
@@ -315,18 +334,18 @@ def draw_star(surf, cx, cy, r, col):
 def draw_hud(surf, fonts, st, my_pid):
     font, big, tiny = fonts
     players = st.get('players', [])
-    wins    = st.get('wins', [0, 0])
-    rnd     = st.get('round', 0)
+    wins = st.get('wins', [0, 0])
+    rnd = st.get('round', 0)
 
     # Round indicator
     rnd_s = tiny.render(f'Round {rnd}  ·  Best of 3', True, C['white'])
     surf.blit(rnd_s, (W // 2 - rnd_s.get_width() // 2, 8))
 
     for i, p in enumerate(players):
-        col   = DINO_COLS[i][0]
+        col = DINO_COLS[i][0]
         label = 'P1' if i == 0 else 'P2'
-        mine  = (i == my_pid)
-        x     = 12 if i == 0 else W - 170
+        mine = (i == my_pid)
+        x = 12 if i == 0 else W - 170
 
         # "YOU" indicator
         if mine:
@@ -368,20 +387,21 @@ def draw_splash(surf, fonts, my_pid, ft):
         sx = rng.randint(0, W)
         sy = rng.randint(0, H // 2)
         twinkle = int(160 + 80 * math.sin(ft * 0.05 + sx * 0.3))
-        pygame.draw.circle(surf, (int(twinkle) % 256, int(twinkle) % 256, min(255, int(twinkle + 30))), (sx, sy), 1)
+        pygame.draw.circle(surf, (int(twinkle) % 256, int(
+            twinkle) % 256, min(255, int(twinkle + 30))), (sx, sy), 1)
     # Ground strip
     pygame.draw.rect(surf, C['ground'], (0, H - 80, W, 80))
     pygame.draw.rect(surf, C['grass'],  (0, H - 80, W, 9))
 
     # Animated dinos on splash
     for pid in range(2):
-        dx   = 220 + pid * 380
+        dx = 220 + pid * 380
         step = ft + pid * 30
         draw_dino(surf, dx, H - 80, False, pid, dead=False, step=step)
 
     # Title with shadow
     title_sh = big.render('DINO  RUN', True, (40, 20, 80))
-    title    = big.render('DINO  RUN', True, (80, 225, 110))
+    title = big.render('DINO  RUN', True, (80, 225, 110))
     tx = W // 2 - title.get_width() // 2
     surf.blit(title_sh, (tx + 4, 64))
     surf.blit(title,    (tx,     60))
@@ -409,7 +429,7 @@ def draw_splash(surf, fonts, my_pid, ft):
 
     # Player badge
     if my_pid is not None:
-        col  = DINO_COLS[my_pid][0]
+        col = DINO_COLS[my_pid][0]
         badge = font.render(f'You are  Player {my_pid + 1}', True, col)
         surf.blit(badge, (W // 2 - badge.get_width() // 2, 330))
 
@@ -437,8 +457,8 @@ def draw_round_end(surf, fonts, st):
     _overlay(surf, 145)
 
     players = st.get('players', [])
-    wins    = st.get('wins', [0, 0])
-    alive   = [p for p in players if p['alive']]
+    wins = st.get('wins', [0, 0])
+    alive = [p for p in players if p['alive']]
 
     if alive:
         wid = alive[0]['id']
@@ -449,7 +469,7 @@ def draw_round_end(surf, fonts, st):
         msg = "It's a Tie!"
 
     shadow = big.render(msg, True, (20, 20, 20))
-    text   = big.render(msg, True, col)
+    text = big.render(msg, True, col)
     surf.blit(shadow, (W // 2 - text.get_width() // 2 + 3, H // 2 - 66))
     surf.blit(text,   (W // 2 - text.get_width() // 2,     H // 2 - 70))
 
@@ -474,15 +494,17 @@ def draw_game_over(surf, fonts, st):
     _overlay(surf, 175)
 
     players = st.get('players', [])
-    wins    = st.get('wins', [0, 0])
-    winner  = 0 if wins[0] >= wins[1] else 1
-    col     = DINO_COLS[winner][0]
+    wins = st.get('wins', [0, 0])
+    winner = 0 if wins[0] >= wins[1] else 1
+    col = DINO_COLS[winner][0]
 
     # Trophy area
-    trophy = big.render('🏆', True, C['gold']) if False else None  # emoji unreliable
+    trophy = big.render('🏆', True, C['gold']
+                        ) if False else None  # emoji unreliable
 
-    t1_sh = big.render(f'Player {winner + 1}  Wins the Match!', True, (20, 20, 20))
-    t1    = big.render(f'Player {winner + 1}  Wins the Match!', True, col)
+    t1_sh = big.render(
+        f'Player {winner + 1}  Wins the Match!', True, (20, 20, 20))
+    t1 = big.render(f'Player {winner + 1}  Wins the Match!', True, col)
     surf.blit(t1_sh, (W // 2 - t1.get_width() // 2 + 3, H // 2 - 86))
     surf.blit(t1,    (W // 2 - t1.get_width() // 2,     H // 2 - 90))
 
@@ -497,7 +519,8 @@ def draw_game_over(surf, fonts, st):
         True, C['gold'])
     surf.blit(w_txt, (W // 2 - w_txt.get_width() // 2, H // 2 + 48))
 
-    again = font.render('New match starting soon…  Get ready!', True, C['grey'])
+    again = font.render(
+        'New match starting soon…  Get ready!', True, C['grey'])
     surf.blit(again, (W // 2 - again.get_width() // 2, H // 2 + 95))
 
 
@@ -511,7 +534,8 @@ def main():
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.connect((SERVER_IP, PORT))
     except ConnectionRefusedError:
-        print(f'[client] Could not connect to {SERVER_IP}:{PORT} — is the server running?')
+        print(
+            f'[client] Could not connect to {SERVER_IP}:{PORT} — is the server running?')
         sys.exit(1)
 
     print('[client] Connected! Waiting for player assignment…')
@@ -526,26 +550,26 @@ def main():
 
     # ── Pygame Initialization ────────────────────────────────────────────────
     pygame.init()
-    surf   = pygame.display.set_mode((W, H))
-    title  = f'Dino Run — Player {_player_id + 1}' if _player_id is not None else 'Dino Run'
+    surf = pygame.display.set_mode((W, H))
+    title = f'Dino Run — Player {_player_id + 1}' if _player_id is not None else 'Dino Run'
     pygame.display.set_caption(title)
-    clock  = pygame.time.Clock()
+    clock = pygame.time.Clock()
 
     _build_sky()
 
     try:
         font = pygame.font.SysFont('Arial', 22, bold=True)
-        big  = pygame.font.SysFont('Arial', 46, bold=True)
+        big = pygame.font.SysFont('Arial', 46, bold=True)
         tiny = pygame.font.SysFont('Arial', 17)
     except Exception:
         font = pygame.font.Font(None, 26)
-        big  = pygame.font.Font(None, 56)
+        big = pygame.font.Font(None, 56)
         tiny = pygame.font.Font(None, 20)
     fonts = (font, big, tiny)
 
     keys_down = set()
     scroll_bg = 0.0
-    ft        = 0         
+    ft = 0
 
     running = True
     while running:
@@ -568,8 +592,8 @@ def main():
         else:
             j_key, d_key = pygame.K_UP, pygame.K_DOWN
 
-        jump  = j_key in keys_down
-        duck  = d_key in keys_down
+        jump = j_key in keys_down
+        duck = d_key in keys_down
         start = pygame.K_SPACE in keys_down
 
 # ── Grab latest game state ────────────────────────────────────────────
@@ -586,7 +610,8 @@ def main():
 
         # ── Send input to server ──────────────────────────────────────────────
         # נגיע לכאן ונתחיל לשלוח קלט רק אחרי ששחקן 2 התחבר והשרת התחיל לשלוח נתונים
-        msg = json.dumps({'j': jump, 'd': duck, 'start': start}).encode() + b'\n'
+        msg = json.dumps(
+            {'j': jump, 'd': duck, 'start': start}).encode() + b'\n'
         try:
             sock.sendall(msg)
         except OSError:
