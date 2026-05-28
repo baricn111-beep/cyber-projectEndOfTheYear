@@ -17,27 +17,6 @@ import json
 import time
 import random
 import sys
-import os
-import logging
-
-# ─── מערכת הלוגים לשרת (Server Logging Setup) ───────────────────────────────
-# מוצא את התיקייה המדויקת שבה קובץ השרת שמור
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_FILE_PATH = os.path.join(SCRIPT_DIR, "dino_server.log")
-
-# הדפסה ראשונית למסך כדי לראות איפה הקובץ נוצר
-print(f"\n[DINO SERVER] Checking log file path: {LOG_FILE_PATH}\n")
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[
-        logging.FileHandler(LOG_FILE_PATH, encoding="utf-8",
-                            mode="w"),  # מנקה בכל הרצה
-        logging.StreamHandler(sys.stdout)  # מדפיס במקביל לטרמינל
-    ]
-)
 
 # ─── Screen / World Constants ────────────────────────────────────────────────
 W, H = 900, 450
@@ -53,10 +32,27 @@ INIT_SPEED = 5.0
 MAX_SPEED = 13.0
 SPEED_INC = 0.0016        # px per frame² speed increase
 
-# PLAYER LAYOUT
+# ─── Avalanche ───────────────────────────────────────────────────────────────
+# AVALANCHE DISABLED (The "Lava Wall" will never reach players)
+AVAL_X0 = -9999.0
+AVAL_BASE = 0.0
+AVAL_ACC = 0.0
+
+# PLAYER LAYOUT (P1 is no longer "trapped" by the wall)
+P1_SX, P2_SX = 110, 185
+
+# UPDATED HITBOXES (Cactus style: Taller and Thinner)
+DINO_W = 38
+DINO_H = 52
+DINO_DUCK_H = 26
+
+ROCK_W = 24   # Thinner for Cacti
+ROCK_H = 46   # Taller for Cacti
+
+# ─── Player Layout ───────────────────────────────────────────────────────────
 P1_SX, P2_SX = 110, 175     # fixed screen-x positions
 
-# OBJECT SIZES
+# ─── Object Sizes ────────────────────────────────────────────────────────────
 DINO_W = 38
 DINO_H = 52
 DINO_DUCK_H = 26
@@ -159,7 +155,7 @@ class Game:
     def __init__(self):
         self.wins = [0, 0]
         self.round_num = 0
-        self.phase = 'splash'  # splash | playing | round_end | game_over
+        self.phase = 'splash'  # splash | playing | round_end | game_over | disconnect
         self._init_round()
 
     # ── Round Management ─────────────────────────────────────────────────────
@@ -168,6 +164,7 @@ class Game:
         self.obstacles = []
         self.eggs = []
         self.speed = INIT_SPEED
+        self.aval_x = AVAL_X0
         self.frame = 0
         self.delay = 0          # countdown timer (frames)
         # Spawn timers (distance remaining until next spawn, in px)
@@ -178,11 +175,10 @@ class Game:
         self._init_round()
         self.phase = 'playing'
         self.round_num += 1
-        logging.info(f"Round {self.round_num} started officially.")
 
     # ── Main Update (called every frame) ─────────────────────────────────────
     def update(self):
-        if self.phase == 'splash':
+        if self.phase in ('splash', 'disconnect'):
             return
 
         if self.phase in ('round_end', 'game_over'):
@@ -191,8 +187,6 @@ class Game:
                 if self.phase == 'round_end':
                     self.start_round()
                 else:           # game_over → restart whole match
-                    logging.info(
-                        "Match completely finished. Resetting game to splash screen.")
                     self.wins = [0, 0]
                     self.round_num = 0
                     self._init_round()
@@ -203,6 +197,7 @@ class Game:
         f = self.frame
         self.frame += 1
         self.speed = min(MAX_SPEED, INIT_SPEED + f * SPEED_INC)
+        self.aval_x += AVAL_BASE + f * AVAL_ACC
 
         # ── Spawn obstacles ──────────────────────────────────────────────────
         self.next_obs -= self.speed
@@ -236,28 +231,25 @@ class Game:
             if not p.alive:
                 continue
 
+            if self.aval_x >= p.sx:
+                p.alive = False
+                continue
+
             pr = p.rect()
 
-            # Obstacle collision?
             for o in self.obstacles:
                 if rects_overlap(pr, (o.x, o.y, o.w, o.h)):
                     p.alive = False
-                    logging.info(
-                        f"Collision detected! Player {p.id + 1} hit a {o.kind}.")
                     break
             if not p.alive:
                 continue
 
-            # Egg pickup?
             for e in self.eggs:
                 if not e.taken[p.id]:
                     if rects_overlap(pr, (e.x, e.y, EGG_W, EGG_H)):
                         e.taken[p.id] = True
                         p.score += 10
-                        logging.info(
-                            f"Player {p.id + 1} collected an egg (+10 pts).")
 
-            # Survival score (one point per frame alive)
             p.score += 1
 
         # ── Check round end ──────────────────────────────────────────────────
@@ -266,30 +258,22 @@ class Game:
             if len(alive) == 1:
                 w = alive[0].id
                 self.wins[w] += 1
-                logging.info(
-                    f"Round ended. Player {w + 1} is the last survivor. Total wins: P1={self.wins[0]}, P2={self.wins[1]}")
-            else:
-                logging.info(
-                    f"Round ended in a tie! Both players died simultaneously.")
 
-            if max(self.wins) >= 2:         # match decided
+            if max(self.wins) >= 2:
                 self.phase = 'game_over'
                 self.delay = FPS * 10
-                winner = 1 if self.wins[1] >= 2 else 0
-                logging.info(
-                    f"Match Decided! Player {winner + 1} won 2 rounds. Entering game_over phase.")
             else:
                 self.phase = 'round_end'
                 self.delay = FPS * 4
 
     # ── Serialise state for broadcast ────────────────────────────────────────
-
     def state(self):
         return {
             'phase': self.phase,
             'wins': self.wins[:],
             'round': self.round_num,
             'speed': round(self.speed, 2),
+            'aval_x': round(self.aval_x, 1),
             'players': [p.as_dict() for p in self.players],
             'obstacles': [o.as_dict() for o in self.obstacles],
             'eggs': [e.as_dict() for e in self.eggs],
@@ -326,87 +310,62 @@ def recv_loop(sock, pid):
                         if game.phase == 'splash' and msg.get('start', False):
                             game.start_round()
                 except json.JSONDecodeError:
-                    logging.warning(
-                        f"Malformed JSON received from Player {pid + 1}: '{line[:50]}'")
                     pass
         except socket.timeout:
             continue
-        except OSError as oe:
-            logging.error(
-                f"Network error in communication loop for Player {pid + 1}: {oe}")
+        except OSError:
             break
-    logging.warning(f"Player {pid + 1} disconnected from the match.")
+
+    print(f'[server] Player {pid + 1} disconnected.')
+    # שינוי מצב המשחק לניתוק וניקוי השחקן מרשימת הקליינטים
+    with lock:
+        clients[pid] = None
+        game.phase = 'disconnect'
 
 
 def main():
-    logging.info("Starting Dino Run Server initialization...")
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-    try:
-        srv.bind(('0.0.0.0', PORT))
-    except OSError as be:
-        logging.critical(
-            f"Failed to bind socket to port {PORT}. Is another server instance running? Error: {be}")
-        sys.exit(1)
-
+    srv.bind(('0.0.0.0', PORT))
     srv.listen(2)
 
     local_ip = socket.gethostbyname(socket.gethostname())
-
-    # הדפסת התיבה המעוצבת לטרמינל
     print(f'╔══════════════════════════════════════════╗')
     print(f'║      DINO RUN SERVER  —  Ready           ║')
     print(f'╠══════════════════════════════════════════╣')
     print(f'║  Host IP  : {local_ip:<28} ║')
     print(f'║  Port     : {PORT:<28} ║')
     print(f'║                                          ║')
-    print(f'║  Waiting for 2 players to connect…       ║')
+    print(f'║  Waiting for 2 players to connect…      ║')
     print(f'╚══════════════════════════════════════════╝')
-
-    logging.info(
-        f"Socket successfully bound to 0.0.0.0:{PORT}. Waiting for connections...")
 
     for pid in range(2):
         conn, addr = srv.accept()
-        logging.info(
-            f"Player {pid + 1} connected successfully from {addr[0]}:{addr[1]}")
+        print(f'[server] Player {pid + 1} connected from {addr[0]}:{addr[1]}')
         clients[pid] = conn
         hello = json.dumps({'welcome': pid}).encode() + b'\n'
-        try:
-            conn.sendall(hello)
-        except OSError as se:
-            logging.error(
-                f"Failed to send greeting packet to Player {pid + 1}: {se}")
-
+        conn.sendall(hello)
         t = threading.Thread(target=recv_loop, args=(conn, pid), daemon=True)
         t.start()
 
-    logging.info(
-        "Both players are connected! Triggering splash screen activation.")
+    print('[server] Both players connected!  Showing splash screen…')
 
-    last_phase = None
     interval = 1.0 / FPS
     while True:
         t0 = time.perf_counter()
 
         with lock:
-            game.update()
+            # מריצים עדכון פיזיקה רק אם אף שחקן לא מנותק
+            if game.phase != 'disconnect':
+                game.update()
             st = game.state()
 
-        # מעקב אחרי שינויי שלבים של השרת בלוג
-        if st['phase'] != last_phase:
-            logging.info(
-                f"Server game phase shift: '{last_phase}' ──> '{st['phase']}'")
-            last_phase = st['phase']
-
         msg = json.dumps(st).encode() + b'\n'
-        for c_id, c in enumerate(clients):
+        for c in clients:
             if c:
                 try:
                     c.sendall(msg)
                 except OSError:
-                    # יטופל בתוך ה-recv_loop thread כשזה ייכשל
                     pass
 
         elapsed = time.perf_counter() - t0
