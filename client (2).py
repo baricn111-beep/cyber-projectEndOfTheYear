@@ -20,11 +20,33 @@ import sys
 import time
 import math
 import random
+import os
+import sys
+import logging
+
+# ─── מערכת הלוגים (Logging Setup) ───────────────────────────────────────────
+# מוצא את התיקייה המדויקת שבה הקובץ הזה (client.py) שמור
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_FILE_PATH = os.path.join(SCRIPT_DIR, "dino_client.log")
+
+# הדפסה מיידית למסך כדי שתראה בעיניים איפה הוא אמור להיות:
+print(f"\n[DINO] Checking log file path: {LOG_FILE_PATH}\n")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.FileHandler(LOG_FILE_PATH, encoding="utf-8",
+                            mode="w"),  # נתיב מלא ומדויק
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 
 try:
     import pygame
 except ImportError:
-    print("pygame is required.  Run:  pip install pygame")
+    logging.critical("pygame is required. Run: pip install pygame")
     sys.exit(1)
 
 # ─── Connection ───────────────────────────────────────────────────────────────
@@ -81,10 +103,13 @@ _can_send = False  # Global flag to gate transmission
 def net_thread(sock):
     global _latest_st, _player_id, _can_send
     buf = ''
+    logging.info("Network receiver thread started successfully.")
     while True:
         try:
             chunk = sock.recv(8192).decode('utf-8', errors='replace')
             if not chunk:
+                logging.warning(
+                    "Server closed the connection (Empty chunk received).")
                 break
             buf += chunk
             while '\n' in buf:
@@ -96,19 +121,25 @@ def net_thread(sock):
                     msg = json.loads(line)
                     if 'welcome' in msg:
                         _player_id = int(msg['welcome'])
-                        print(f'[client] Assigned as Player {_player_id + 1}')
-                    # NEW: Catch the synchronization signal
+                        logging.info(
+                            f"Welcome packet received. Assigned as Player {_player_id + 1}")
+                    # Catch the synchronization signal
                     elif msg.get('status') == 'ready':
                         _can_send = True
-                        print(
-                            '[client] Both players connected. Input stream active.')
+                        logging.info(
+                            "Synchronization signal received: Both players connected. Input stream active.")
                     else:
                         with _lock:
                             _latest_st = msg
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as je:
+                    logging.error(
+                        f"Failed to decode JSON from line: '{line[:50]}...' Error: {je}")
                     pass
-        except OSError:
+        except OSError as oe:
+            logging.error(
+                f"Network exception occurred in receiver thread: {oe}")
             break
+    logging.info("Network receiver thread is shutting down.")
 
 
 # ─── Drawing: Background ─────────────────────────────────────────────────────
@@ -245,12 +276,10 @@ def draw_dino(surf, sx, y, ducking, pid, dead=False, step=0):
             pygame.draw.line(surf, C['red'], (dx+3, dy-3), (dx-3, dy+3), 2)
 
 
-# --- Replace the draw_rock function (around line 225) ---
 def draw_rock(surf, x, y, w, h):
     """Draws a classic Dino-game Cactus instead of a rock."""
     ix, iy = int(x), int(y)
     green = (72, 155, 55)
-    dark_green = (55, 130, 40)
 
     # Main Trunk
     pygame.draw.rect(surf, green, (ix + w//3, iy, w//3, h), border_radius=4)
@@ -308,12 +337,12 @@ def draw_ptero(surf, x, y, w, h, ft):
 # ─── Drawing: Egg ────────────────────────────────────────────────────────────
 def draw_egg(surf, x, y, w, h, ft):
     ix, iy = int(x), int(y)
-    bob = int(math.sin(ft * 0.07) * 3)
-    iy -= bob
+    bold = int(math.sin(ft * 0.07) * 3)
+    iy -= bold
     # Shadow
     pygame.draw.ellipse(surf, (90, 64, 24), (ix + 2, iy + h - 4, w - 2, 6))
     # Body
-    pygame.draw.ellipse(surf, C['egg'],    (ix,     iy,     w,     h))
+    pygame.draw.ellipse(surf, C['egg'],    (ix,     iy,      w,     h))
     pygame.draw.ellipse(surf, C['egg_hi'], (ix + 4, iy + 3, w - 8, h // 2))
     # Glint
     pygame.draw.ellipse(surf, C['white'],  (ix + 5, iy + 4, 5, 3))
@@ -417,9 +446,9 @@ def draw_splash(surf, fonts, my_pid, ft):
     pygame.draw.rect(surf, (80, 80, 120), box_rect, 1, border_radius=6)
 
     ctrl_lines = [
-        ('Player 1  :  W = Jump   ·   S = Duck',  DINO_COLS[0][0]),
-        ('Player 2  :  ↑ = Jump   ·   ↓ = Duck',  DINO_COLS[1][0]),
-        ('',                                        C['white']),
+        ('Player 1   :   W = Jump   ·   S = Duck',  DINO_COLS[0][0]),
+        ('Player 2   :   ↑ = Jump   ·   ↓ = Duck',  DINO_COLS[1][0]),
+        ('',                                          C['white']),
         ('Collect eggs for bonus points!',          C['egg_hi']),
         ('First to win 2 rounds wins the match.',   C['grey']),
     ]
@@ -438,11 +467,6 @@ def draw_splash(surf, fonts, my_pid, ft):
     start_col = (alpha, alpha, int(alpha * 0.7))
     start_s = font.render('Press  SPACE  to start', True, start_col)
     surf.blit(start_s, (W // 2 - start_s.get_width() // 2, 375))
-
-    # Waiting label
-    if my_pid is None:
-        wait_s = tiny.render('Connecting to server…', True, C['grey'])
-        surf.blit(wait_s, (W // 2 - wait_s.get_width() // 2, 418))
 
 
 # ─── Drawing: Overlay Panels ─────────────────────────────────────────────────
@@ -498,10 +522,6 @@ def draw_game_over(surf, fonts, st):
     winner = 0 if wins[0] >= wins[1] else 1
     col = DINO_COLS[winner][0]
 
-    # Trophy area
-    trophy = big.render('🏆', True, C['gold']
-                        ) if False else None  # emoji unreliable
-
     t1_sh = big.render(
         f'Player {winner + 1}  Wins the Match!', True, (20, 20, 20))
     t1 = big.render(f'Player {winner + 1}  Wins the Match!', True, col)
@@ -529,26 +549,34 @@ def main():
     global _player_id
 
     # ── Connect to server ────────────────────────────────────────────────────
-    print(f'[client] Connecting to {SERVER_IP}:{PORT}…')
+    logging.info(f"Initiating connection to {SERVER_IP}:{PORT}…")
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.connect((SERVER_IP, PORT))
+        logging.info(
+            f"TCP Connection established successfully with {SERVER_IP}:{PORT}")
     except ConnectionRefusedError:
-        print(
-            f'[client] Could not connect to {SERVER_IP}:{PORT} — is the server running?')
+        logging.critical(
+            f"Connection refused! Could not connect to {SERVER_IP}:{PORT}. Is server.py running?")
         sys.exit(1)
 
-    print('[client] Connected! Waiting for player assignment…')
+    logging.info("Spawning network listener thread…")
     t = threading.Thread(target=net_thread, args=(sock,), daemon=True)
     t.start()
 
     # Wait for player-id assignment
+    logging.info("Waiting for player ID assignment from server...")
     for _ in range(100):
         if _player_id is not None:
             break
         time.sleep(0.05)
 
+    if _player_id is None:
+        logging.warning(
+            "Player ID assignment is taking longer than expected. Proceeding to Pygame screen setup.")
+
     # ── Pygame Initialization ────────────────────────────────────────────────
+    logging.info("Initializing Pygame system...")
     pygame.init()
     surf = pygame.display.set_mode((W, H))
     title = f'Dino Run — Player {_player_id + 1}' if _player_id is not None else 'Dino Run'
@@ -561,7 +589,9 @@ def main():
         font = pygame.font.SysFont('Arial', 22, bold=True)
         big = pygame.font.SysFont('Arial', 46, bold=True)
         tiny = pygame.font.SysFont('Arial', 17)
-    except Exception:
+    except Exception as fe:
+        logging.warning(
+            f"Arial system fonts not found, falling back to default Pygame fonts. Info: {fe}")
         font = pygame.font.Font(None, 26)
         big = pygame.font.Font(None, 56)
         tiny = pygame.font.Font(None, 20)
@@ -571,6 +601,11 @@ def main():
     scroll_bg = 0.0
     ft = 0
 
+    # Variables to track transitions without flooding the log
+    last_phase = None
+    is_waiting_logged = False
+
+    logging.info("Entering main game loop.")
     running = True
     while running:
         clock.tick(FPS)
@@ -579,6 +614,7 @@ def main():
         # ── Events ───────────────────────────────────────────────────────────
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
+                logging.info("Quit event intercepted. Exiting game loop.")
                 running = False
             if ev.type == pygame.KEYDOWN:
                 keys_down.add(ev.key)
@@ -596,28 +632,41 @@ def main():
         duck = d_key in keys_down
         start = pygame.K_SPACE in keys_down
 
-# ── Grab latest game state ────────────────────────────────────────────
+        # ── Grab latest game state ────────────────────────────────────────────
         with _lock:
             st = _latest_st
 
         # ── Render Logic ──────────────────────────────────────────────────────
         if st is None:
+            if not is_waiting_logged:
+                logging.info(
+                    "Game state buffer is empty. Displaying waiting screen...")
+                is_waiting_logged = True
             surf.fill((18, 12, 32))
             wait = font.render('Waiting for other player…', True, C['grey'])
             surf.blit(wait, (W // 2 - wait.get_width() // 2, H // 2))
             pygame.display.flip()
-            continue  # <--- ברגע שזה רץ, אנחנו חוזרים לתחילת הלולאה ולא מגיעים לשליחה
+            continue
+
+        if is_waiting_logged:
+            logging.info(
+                "First game state packet received! Cleared waiting screen.")
+            is_waiting_logged = False
 
         # ── Send input to server ──────────────────────────────────────────────
-        # נגיע לכאן ונתחיל לשלוח קלט רק אחרי ששחקן 2 התחבר והשרת התחיל לשלוח נתונים
         msg = json.dumps(
             {'j': jump, 'd': duck, 'start': start}).encode() + b'\n'
         try:
             sock.sendall(msg)
-        except OSError:
+        except OSError as se:
+            logging.error(f"Failed to transmit input packets to server: {se}")
             pass
 
+        # Track Phase Shifts
         phase = st.get('phase', 'splash')
+        if phase != last_phase:
+            logging.info(f"Phase shift detected: '{last_phase}' ──> '{phase}'")
+            last_phase = phase
 
         if phase == 'splash':
             draw_splash(surf, fonts, pid, ft)
@@ -652,8 +701,10 @@ def main():
 
         pygame.display.flip()
 
+    logging.info("Shutting down socket connection and cleaning up resources.")
     sock.close()
     pygame.quit()
+    logging.info("Client closed completely.")
 
 
 if __name__ == '__main__':
