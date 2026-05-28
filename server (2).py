@@ -19,50 +19,50 @@ import random
 import sys
 
 # ─── Screen / World Constants ────────────────────────────────────────────────
-W, H        = 900, 450
-GROUND_Y    = 345           # y-coordinate of ground surface (pixels from top)
-FPS         = 60
+W, H = 900, 450
+GROUND_Y = 345           # y-coordinate of ground surface (pixels from top)
+FPS = 60
 
 # ─── Physics ─────────────────────────────────────────────────────────────────
-GRAVITY     = 0.72
-JUMP_V      = -15.5
+GRAVITY = 0.72
+JUMP_V = -15.5
 
 # ─── Game Speed ──────────────────────────────────────────────────────────────
-INIT_SPEED  = 5.0
-MAX_SPEED   = 13.0
-SPEED_INC   = 0.0016        # px per frame² speed increase
-     
+INIT_SPEED = 5.0
+MAX_SPEED = 13.0
+SPEED_INC = 0.0016        # px per frame² speed increase
+
 
 # PLAYER LAYOUT (P1 is no longer "trapped" by the wall)
-P1_SX, P2_SX = 110, 185 
+P1_SX, P2_SX = 110, 185
 
 # UPDATED HITBOXES (Cactus style: Taller and Thinner)
-DINO_W      = 38
-DINO_H      = 52
+DINO_W = 38
+DINO_H = 52
 DINO_DUCK_H = 26
 
-ROCK_W      = 24   # Thinner for Cacti
-ROCK_H      = 46   # Taller for Cacti
+ROCK_W = 24   # Thinner for Cacti
+ROCK_H = 46   # Taller for Cacti
 
 # ─── Player Layout ───────────────────────────────────────────────────────────
 P1_SX, P2_SX = 110, 175     # fixed screen-x positions
 
 # ─── Object Sizes ────────────────────────────────────────────────────────────
-DINO_W      = 38
-DINO_H      = 52
+DINO_W = 38
+DINO_H = 52
 DINO_DUCK_H = 26
 
-ROCK_W      = 34
-ROCK_H      = 38
+ROCK_W = 34
+ROCK_H = 38
 
-PTERO_W     = 54
-PTERO_H     = 26
-PTERO_Y     = GROUND_Y - 58   # must duck to avoid
+PTERO_W = 54
+PTERO_H = 26
+PTERO_Y = GROUND_Y - 58   # must duck to avoid
 
-EGG_W       = 20
-EGG_H       = 26
+EGG_W = 20
+EGG_H = 26
 
-PORT        = 5555
+PORT = 5555
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -76,13 +76,13 @@ def rects_overlap(r1, r2):
 # ─── Game Objects ────────────────────────────────────────────────────────────
 class Player:
     def __init__(self, pid, sx):
-        self.id      = pid
-        self.sx      = sx
-        self.y       = float(GROUND_Y)
-        self.vy      = 0.0
-        self.alive   = True
+        self.id = pid
+        self.sx = sx
+        self.y = float(GROUND_Y)
+        self.vy = 0.0
+        self.alive = True
         self.ducking = False
-        self.score   = 0
+        self.score = 0
         # inputs written by network thread
         self.inp_jump = False
         self.inp_duck = False
@@ -94,9 +94,9 @@ class Player:
         if self.inp_jump and on_ground:
             self.vy = JUMP_V
         self.vy += GRAVITY
-        self.y  += self.vy
+        self.y += self.vy
         if self.y >= GROUND_Y:
-            self.y  = GROUND_Y
+            self.y = GROUND_Y
             self.vy = 0.0
         self.ducking = self.inp_duck and on_ground
 
@@ -107,18 +107,18 @@ class Player:
 
     def as_dict(self):
         return {
-            'id'     : self.id,
-            'sx'     : self.sx,
-            'y'      : round(self.y, 1),
-            'alive'  : self.alive,
+            'id': self.id,
+            'sx': self.sx,
+            'y': round(self.y, 1),
+            'alive': self.alive,
             'ducking': self.ducking,
-            'score'  : self.score,
+            'score': self.score,
         }
 
 
 class Obstacle:
     def __init__(self, x, kind):
-        self.x    = float(x)
+        self.x = float(x)
         self.kind = kind        # 'rock' or 'ptero'
         if kind == 'rock':
             self.y = GROUND_Y - ROCK_H
@@ -134,8 +134,8 @@ class Obstacle:
 
 class Egg:
     def __init__(self, x):
-        self.x     = float(x)
-        self.y     = GROUND_Y - EGG_H
+        self.x = float(x)
+        self.y = GROUND_Y - EGG_H
         self.taken = [False, False]
 
     def as_dict(self):
@@ -148,26 +148,26 @@ class Game:
     """All game logic lives here; completely independent of networking."""
 
     def __init__(self):
-        self.wins      = [0, 0]
+        self.wins = [0, 0]
         self.round_num = 0
-        self.phase     = 'splash'  # splash | playing | round_end | game_over
+        self.phase = 'splash'  # splash | playing | round_end | game_over
         self._init_round()
 
     # ── Round Management ─────────────────────────────────────────────────────
     def _init_round(self):
-        self.players   = [Player(0, P1_SX), Player(1, P2_SX)]
+        self.players = [Player(0, P1_SX), Player(1, P2_SX)]
         self.obstacles = []
-        self.eggs      = []
-        self.speed     = INIT_SPEED
-        self.frame     = 0
-        self.delay     = 0          # countdown timer (frames)
+        self.eggs = []
+        self.speed = INIT_SPEED
+        self.frame = 0
+        self.delay = 0          # countdown timer (frames)
         # Spawn timers (distance remaining until next spawn, in px)
-        self.next_obs  = float(random.randint(320, 520))
-        self.next_egg  = float(random.randint(250, 450))
+        self.next_obs = float(random.randint(320, 520))
+        self.next_egg = float(random.randint(250, 450))
 
     def start_round(self):
         self._init_round()
-        self.phase      = 'playing'
+        self.phase = 'playing'
         self.round_num += 1
 
     # ── Main Update (called every frame) ─────────────────────────────────────
@@ -181,22 +181,23 @@ class Game:
                 if self.phase == 'round_end':
                     self.start_round()
                 else:           # game_over → restart whole match
-                    self.wins      = [0, 0]
+                    self.wins = [0, 0]
                     self.round_num = 0
                     self._init_round()
                     self.phase = 'splash'
             return
 
         # ── Advance frame ────────────────────────────────────────────────────
-        f           = self.frame
+        f = self.frame
         self.frame += 1
-        self.speed  = min(MAX_SPEED, INIT_SPEED + f * SPEED_INC)
+        self.speed = min(MAX_SPEED, INIT_SPEED + f * SPEED_INC)
 
         # ── Spawn obstacles ──────────────────────────────────────────────────
         self.next_obs -= self.speed
         if self.next_obs <= 0:
             # Occasionally spawn double rocks
-            kind  = random.choices(['rock', 'ptero', 'rock'], weights=[55, 30, 15])[0]
+            kind = random.choices(
+                ['rock', 'ptero', 'rock'], weights=[55, 30, 15])[0]
             spawn = W + 80
             self.obstacles.append(Obstacle(spawn, kind))
             # Sometimes a second rock right after the first
@@ -217,7 +218,7 @@ class Game:
             e.x -= self.speed
 
         self.obstacles = [o for o in self.obstacles if o.x > -140]
-        self.eggs      = [e for e in self.eggs      if e.x > -60]
+        self.eggs = [e for e in self.eggs if e.x > -60]
 
         # ── Update players ───────────────────────────────────────────────────
         for p in self.players:
@@ -240,7 +241,7 @@ class Game:
                 if not e.taken[p.id]:
                     if rects_overlap(pr, (e.x, e.y, EGG_W, EGG_H)):
                         e.taken[p.id] = True
-                        p.score      += 10
+                        p.score += 10
 
             # Survival score (one point per frame alive)
             p.score += 1
@@ -262,20 +263,20 @@ class Game:
     # ── Serialise state for broadcast ────────────────────────────────────────
     def state(self):
         return {
-            'phase'    : self.phase,
-            'wins'     : self.wins[:],
-            'round'    : self.round_num,
-            'speed'    : round(self.speed, 2),
-            'players'  : [p.as_dict()  for p in self.players],
-            'obstacles': [o.as_dict()  for o in self.obstacles],
-            'eggs'     : [e.as_dict()  for e in self.eggs],
+            'phase': self.phase,
+            'wins': self.wins[:],
+            'round': self.round_num,
+            'speed': round(self.speed, 2),
+            'players': [p.as_dict() for p in self.players],
+            'obstacles': [o.as_dict() for o in self.obstacles],
+            'eggs': [e.as_dict() for e in self.eggs],
         }
 
 
 # ─── Networking ──────────────────────────────────────────────────────────────
-game    = Game()
+game = Game()
 clients = [None, None]
-lock    = threading.Lock()
+lock = threading.Lock()
 
 
 def recv_loop(sock, pid):
@@ -354,7 +355,7 @@ def main():
                     pass
 
         elapsed = time.perf_counter() - t0
-        sleep   = interval - elapsed
+        sleep = interval - elapsed
         if sleep > 0:
             time.sleep(sleep)
 
