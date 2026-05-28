@@ -17,6 +17,27 @@ import json
 import time
 import random
 import sys
+import os
+import logging
+
+# ─── מערכת הלוגים לשרת (Server Logging Setup) ───────────────────────────────
+# מוצא את התיקייה המדויקת שבה קובץ השרת שמור
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_FILE_PATH = os.path.join(SCRIPT_DIR, "dino_server.log")
+
+# הדפסה ראשונית למסך כדי לראות איפה הקובץ נוצר
+print(f"\n[DINO SERVER] Checking log file path: {LOG_FILE_PATH}\n")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.FileHandler(LOG_FILE_PATH, encoding="utf-8",
+                            mode="w"),  # מנקה בכל הרצה
+        logging.StreamHandler(sys.stdout)  # מדפיס במקביל לטרמינל
+    ]
+)
 
 # ─── Screen / World Constants ────────────────────────────────────────────────
 W, H = 900, 450
@@ -32,22 +53,10 @@ INIT_SPEED = 5.0
 MAX_SPEED = 13.0
 SPEED_INC = 0.0016        # px per frame² speed increase
 
-
-# PLAYER LAYOUT (P1 is no longer "trapped" by the wall)
-P1_SX, P2_SX = 110, 185
-
-# UPDATED HITBOXES (Cactus style: Taller and Thinner)
-DINO_W = 38
-DINO_H = 52
-DINO_DUCK_H = 26
-
-ROCK_W = 24   # Thinner for Cacti
-ROCK_H = 46   # Taller for Cacti
-
-# ─── Player Layout ───────────────────────────────────────────────────────────
+# PLAYER LAYOUT
 P1_SX, P2_SX = 110, 175     # fixed screen-x positions
 
-# ─── Object Sizes ────────────────────────────────────────────────────────────
+# OBJECT SIZES
 DINO_W = 38
 DINO_H = 52
 DINO_DUCK_H = 26
@@ -169,6 +178,7 @@ class Game:
         self._init_round()
         self.phase = 'playing'
         self.round_num += 1
+        logging.info(f"Round {self.round_num} started officially.")
 
     # ── Main Update (called every frame) ─────────────────────────────────────
     def update(self):
@@ -181,6 +191,8 @@ class Game:
                 if self.phase == 'round_end':
                     self.start_round()
                 else:           # game_over → restart whole match
+                    logging.info(
+                        "Match completely finished. Resetting game to splash screen.")
                     self.wins = [0, 0]
                     self.round_num = 0
                     self._init_round()
@@ -195,12 +207,10 @@ class Game:
         # ── Spawn obstacles ──────────────────────────────────────────────────
         self.next_obs -= self.speed
         if self.next_obs <= 0:
-            # Occasionally spawn double rocks
             kind = random.choices(
                 ['rock', 'ptero', 'rock'], weights=[55, 30, 15])[0]
             spawn = W + 80
             self.obstacles.append(Obstacle(spawn, kind))
-            # Sometimes a second rock right after the first
             if kind == 'rock' and random.random() < 0.25:
                 self.obstacles.append(Obstacle(spawn + ROCK_W + 18, 'rock'))
             self.next_obs = float(random.randint(230, 500))
@@ -232,6 +242,8 @@ class Game:
             for o in self.obstacles:
                 if rects_overlap(pr, (o.x, o.y, o.w, o.h)):
                     p.alive = False
+                    logging.info(
+                        f"Collision detected! Player {p.id + 1} hit a {o.kind}.")
                     break
             if not p.alive:
                 continue
@@ -242,6 +254,8 @@ class Game:
                     if rects_overlap(pr, (e.x, e.y, EGG_W, EGG_H)):
                         e.taken[p.id] = True
                         p.score += 10
+                        logging.info(
+                            f"Player {p.id + 1} collected an egg (+10 pts).")
 
             # Survival score (one point per frame alive)
             p.score += 1
@@ -252,15 +266,24 @@ class Game:
             if len(alive) == 1:
                 w = alive[0].id
                 self.wins[w] += 1
+                logging.info(
+                    f"Round ended. Player {w + 1} is the last survivor. Total wins: P1={self.wins[0]}, P2={self.wins[1]}")
+            else:
+                logging.info(
+                    f"Round ended in a tie! Both players died simultaneously.")
 
             if max(self.wins) >= 2:         # match decided
                 self.phase = 'game_over'
                 self.delay = FPS * 10
+                winner = 1 if self.wins[1] >= 2 else 0
+                logging.info(
+                    f"Match Decided! Player {winner + 1} won 2 rounds. Entering game_over phase.")
             else:
                 self.phase = 'round_end'
                 self.delay = FPS * 4
 
     # ── Serialise state for broadcast ────────────────────────────────────────
+
     def state(self):
         return {
             'phase': self.phase,
@@ -303,41 +326,66 @@ def recv_loop(sock, pid):
                         if game.phase == 'splash' and msg.get('start', False):
                             game.start_round()
                 except json.JSONDecodeError:
+                    logging.warning(
+                        f"Malformed JSON received from Player {pid + 1}: '{line[:50]}'")
                     pass
         except socket.timeout:
             continue
-        except OSError:
+        except OSError as oe:
+            logging.error(
+                f"Network error in communication loop for Player {pid + 1}: {oe}")
             break
-    print(f'[server] Player {pid + 1} disconnected.')
+    logging.warning(f"Player {pid + 1} disconnected from the match.")
 
 
 def main():
+    logging.info("Starting Dino Run Server initialization...")
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind(('0.0.0.0', PORT))
+
+    try:
+        srv.bind(('0.0.0.0', PORT))
+    except OSError as be:
+        logging.critical(
+            f"Failed to bind socket to port {PORT}. Is another server instance running? Error: {be}")
+        sys.exit(1)
+
     srv.listen(2)
 
     local_ip = socket.gethostbyname(socket.gethostname())
+
+    # הדפסת התיבה המעוצבת לטרמינל
     print(f'╔══════════════════════════════════════════╗')
     print(f'║      DINO RUN SERVER  —  Ready           ║')
     print(f'╠══════════════════════════════════════════╣')
     print(f'║  Host IP  : {local_ip:<28} ║')
     print(f'║  Port     : {PORT:<28} ║')
     print(f'║                                          ║')
-    print(f'║  Waiting for 2 players to connect…      ║')
+    print(f'║  Waiting for 2 players to connect…       ║')
     print(f'╚══════════════════════════════════════════╝')
+
+    logging.info(
+        f"Socket successfully bound to 0.0.0.0:{PORT}. Waiting for connections...")
 
     for pid in range(2):
         conn, addr = srv.accept()
-        print(f'[server] Player {pid + 1} connected from {addr[0]}:{addr[1]}')
+        logging.info(
+            f"Player {pid + 1} connected successfully from {addr[0]}:{addr[1]}")
         clients[pid] = conn
         hello = json.dumps({'welcome': pid}).encode() + b'\n'
-        conn.sendall(hello)
+        try:
+            conn.sendall(hello)
+        except OSError as se:
+            logging.error(
+                f"Failed to send greeting packet to Player {pid + 1}: {se}")
+
         t = threading.Thread(target=recv_loop, args=(conn, pid), daemon=True)
         t.start()
 
-    print('[server] Both players connected!  Showing splash screen…')
+    logging.info(
+        "Both players are connected! Triggering splash screen activation.")
 
+    last_phase = None
     interval = 1.0 / FPS
     while True:
         t0 = time.perf_counter()
@@ -346,12 +394,19 @@ def main():
             game.update()
             st = game.state()
 
+        # מעקב אחרי שינויי שלבים של השרת בלוג
+        if st['phase'] != last_phase:
+            logging.info(
+                f"Server game phase shift: '{last_phase}' ──> '{st['phase']}'")
+            last_phase = st['phase']
+
         msg = json.dumps(st).encode() + b'\n'
-        for c in clients:
+        for c_id, c in enumerate(clients):
             if c:
                 try:
                     c.sendall(msg)
                 except OSError:
+                    # יטופל בתוך ה-recv_loop thread כשזה ייכשל
                     pass
 
         elapsed = time.perf_counter() - t0
