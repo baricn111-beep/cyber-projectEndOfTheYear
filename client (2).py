@@ -20,6 +20,7 @@ import sys
 import time
 import math
 import random
+import struct
 
 try:
     import pygame
@@ -39,31 +40,16 @@ INIT_SPEED = 5
 
 # ─── Colour Palette ──────────────────────────────────────────────────────────
 C = {
-    'sky_top': (100, 180, 230),
-    'sky_bot': (195, 230, 255),
-    'ground': (130, 85,  40),
-    'grass': (72,  155, 55),
-    'grass2': (55,  130, 40),
-    'rock': (115, 96,  74),
-    'rock_hi': (148, 126, 100),
-    'rock_sh': (82,  66,  50),
-    'ptero': (75,  55,  110),
-    'ptero_hi': (105, 80,  150),
-    'egg': (255, 242, 175),
-    'egg_hi': (255, 215, 80),
-    'doom': (45,  12,  8),
-    'doom_edge': (180, 38,  10),
-    'doom_glow': (230, 90,  30),
-    'p1': (55,  190, 80),
-    'p1_hi': (130, 240, 140),
-    'p2': (70,  115, 230),
-    'p2_hi': (130, 170, 255),
-    'white': (255, 255, 255),
-    'black': (0,   0,   0),
-    'gold': (255, 215, 0),
-    'red': (220, 60,  60),
-    'grey': (160, 160, 160),
-    'overlay': (0,   0,   0),
+    'sky_top': (100, 180, 230), 'sky_bot': (195, 230, 255),
+    'ground': (130, 85,  40), 'grass': (72,  155, 55), 'grass2': (55,  130, 40),
+    'rock': (115, 96,  74), 'rock_hi': (148, 126, 100), 'rock_sh': (82,  66,  50),
+    'ptero': (75,  55,  110), 'ptero_hi': (105, 80,  150),
+    'egg': (255, 242, 175), 'egg_hi': (255, 215, 80),
+    'doom': (45,  12,  8), 'doom_edge': (180, 38,  10), 'doom_glow': (230, 90,  30),
+    'p1': (55,  190, 80), 'p1_hi': (130, 240, 140),
+    'p2': (70,  115, 230), 'p2_hi': (130, 170, 255),
+    'white': (255, 255, 255), 'black': (0,   0,   0), 'gold': (255, 215, 0),
+    'red': (220, 60,  60), 'grey': (160, 160, 160), 'overlay': (0,   0,   0),
 }
 
 DINO_COLS = [
@@ -71,39 +57,82 @@ DINO_COLS = [
     (C['p2'], C['p2_hi']),
 ]
 
-# ─── Shared State ─────────────────────────────────────────────────────────────
-_lock = threading.Lock()
+# ─── Shared State (No Locks needed) ───────────────────────────────────────────
 _latest_st = None
 _player_id = None
 
 
+# ─── Network Protocol Helpers ────────────────────────────────────────────────
+def send_msg(sock, data_dict):
+    """
+    Serializes a dictionary payload into JSON format, prefixes it with a 
+    4-byte network byte-order integer specifying the message length, and 
+    sends it completely over the provided socket.
+
+    :param sock: The connected socket object instance.
+    :param data_dict: Dict containing the data/keys to transmit to the server.
+    """
+    raw_json = json.dumps(data_dict).encode('utf-8')
+    header = struct.pack('!I', len(raw_json))  # allways 4bytes
+    sock.sendall(header + raw_json)
+
+
+def recv_exact(sock, num_bytes):
+    """
+    Helper function to cleanly receive an exact number of bytes from a TCP socket,
+    handling fragmentations and ensuring the complete buffer size is populated.
+
+    :param sock: The active network socket connection.
+    :param num_bytes: Integer count of total expected bytes to extract.
+    :return: Completed byte buffer containing exactly num_bytes data.
+    """
+    buf = b''
+    while len(buf) < num_bytes:
+        chunk = sock.recv(num_bytes - len(buf))
+        if not chunk:
+            raise OSError("Connection closed")
+        buf += chunk
+    return buf
+
+
+def recv_msg(sock):
+    """
+    Reads incoming structured data packets from the server. Unpacks the 
+    4-byte header to calculate body size, reads the JSON payload, and 
+    deserializes it back into a native Python dictionary.
+
+    :param sock: The active network socket connection.
+    :return: Parsed Python dict object containing game updates, or None if error.
+    """
+    try:
+        header = recv_exact(sock, 4)
+        msg_len = struct.unpack('!I', header)[0]
+        raw_json = recv_exact(sock, msg_len)
+        return json.loads(raw_json.decode('utf-8'))
+    except (OSError, json.JSONDecodeError, struct.error):
+        return None
+
+
 # ─── Network Receiver Thread ─────────────────────────────────────────────────
 def net_thread(sock):
+    """
+    Background worker thread function that continuously listens for incoming network 
+    packets from the server, routing initial greetings to assign player identity, 
+    and general game state payloads to the global state container.
+
+    :param sock: The connected socket object talking to the game server.
+    """
     global _latest_st, _player_id
-    buf = ''
     while True:
-        try:
-            chunk = sock.recv(8192).decode('utf-8', errors='replace')
-            if not chunk:
-                break
-            buf += chunk
-            while '\n' in buf:
-                line, buf = buf.split('\n', 1)
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    msg = json.loads(line)
-                    if 'welcome' in msg:
-                        _player_id = int(msg['welcome'])
-                        print(f'[client] Assigned as Player {_player_id + 1}')
-                    else:
-                        with _lock:
-                            _latest_st = msg
-                except json.JSONDecodeError:
-                    pass
-        except OSError:
+        msg = recv_msg(sock)
+        if msg is None:
             break
+
+        if 'welcome' in msg:
+            _player_id = int(msg['welcome'])
+            print(f'[client] Assigned as Player {_player_id + 1}')
+        else:
+            _latest_st = msg
 
 
 # ─── Drawing: Background ─────────────────────────────────────────────────────
@@ -111,6 +140,10 @@ _sky_surf = None
 
 
 def _build_sky():
+    """
+    Generates a pre-baked static Pygame Surface containing a smooth linear 
+    vertical sky color gradient to save computational resources during runtime blits.
+    """
     global _sky_surf
     _sky_surf = pygame.Surface((W, GROUND_Y))
     t, b = C['sky_top'], C['sky_bot']
@@ -122,6 +155,14 @@ def _build_sky():
 
 
 def draw_background(surf, scroll, ft):
+    """
+    Renders all environment backdrops, layered clouds, repeating mountain horizons, 
+    ground blocks, and stylized decorative dirt particles based on modern parallax scroll values.
+
+    :param surf: Destination Pygame Surface to render components onto.
+    :param scroll: Current world positional scroll offsetting environmental objects.
+    :param ft: Frame tick counter used for mathematical position alterations.
+    """
     surf.blit(_sky_surf, (0, 0))
 
     for i in range(4):
@@ -157,13 +198,25 @@ def draw_background(surf, scroll, ft):
 
 # ─── Drawing: Dino ───────────────────────────────────────────────────────────
 def draw_dino(surf, sx, y, ducking, pid, dead=False, step=0):
+    """
+    Procedurally constructs and draws a dinosaur player sprite onto the display. 
+    Handles state variants like normal walking, crouching animations, 
+    unique character color models, and custom critical failure death symbols.
+
+    :param surf: Target Pygame window Surface object.
+    :param sx: Screen X position coordinate.
+    :param y: Screen Y position base line coordinate.
+    :param ducking: Boolean flag indicating if the dino model is actively dodging down.
+    :param pid: Integer ID (0 or 1) representing player layout profiles.
+    :param dead: Boolean signaling rendering of a static, knocked out design structure.
+    :param step: Value mapping body movement speed and bob dynamics.
+    """
     base, hi = DINO_COLS[pid]
     if dead:
         base = tuple(min(255, c + 90) for c in base)
         hi = base
 
-    bx = int(sx)
-    by = int(y)
+    bx, by = int(sx), int(y)
 
     if ducking:
         pygame.draw.ellipse(surf, base, (bx - 12, by - 22, 18, 12))
@@ -218,6 +271,15 @@ def draw_dino(surf, sx, y, ducking, pid, dead=False, step=0):
 
 
 def draw_rock(surf, x, y, w, h):
+    """
+    Renders a cactus/rock-like obstacle component onto the ground line using geometric shapes.
+
+    :param surf: Target Pygame Surface.
+    :param x: Current top-left horizontal coordinate.
+    :param y: Current top-left vertical coordinate.
+    :param w: Rectangular footprint width.
+    :param h: Rectangular footprint height.
+    """
     ix, iy = int(x), int(y)
     green = (72, 155, 55)
     pygame.draw.rect(surf, green, (ix + w//3, iy, w//3, h), border_radius=4)
@@ -234,6 +296,17 @@ def draw_rock(surf, x, y, w, h):
 
 # ─── Drawing: Pterodactyl ────────────────────────────────────────────────────
 def draw_ptero(surf, x, y, w, h, ft):
+    """
+    Renders an animated flying Pterodactyl threat with wing flap calculations derived 
+    from sine operations mapped onto current game timelines.
+
+    :param surf: Target Pygame window Surface.
+    :param x: Left bounding coordinate.
+    :param y: Top bounding coordinate.
+    :param w: Absolute structural pixel width.
+    :param h: Absolute structural pixel height.
+    :param ft: Frame time counter indicating clock iterations for animation scaling.
+    """
     flap = math.sin(ft * 0.18) * 10
     cx = int(x + w // 2)
     gy = int(y + h // 2)
@@ -257,6 +330,16 @@ def draw_ptero(surf, x, y, w, h, ft):
 
 # ─── Drawing: Egg ────────────────────────────────────────────────────────────
 def draw_egg(surf, x, y, w, h, ft):
+    """
+    Draws a collectible bonus egg object with a continuous floating bob animation.
+
+    :param surf: Destination drawing context.
+    :param x: Left X placement axis coordinate.
+    :param y: Top Y placement axis coordinate.
+    :param w: Pixel bounding-box width.
+    :param h: Pixel bounding-box height.
+    :param ft: Ongoing frame tick loop used to alter vertical floating offsets.
+    """
     ix, iy = int(x), int(y)
     bob = int(math.sin(ft * 0.07) * 3)
     iy -= bob
@@ -269,6 +352,15 @@ def draw_egg(surf, x, y, w, h, ft):
 
 # ─── Drawing: HUD ────────────────────────────────────────────────────────────
 def draw_star(surf, cx, cy, r, col):
+    """
+    Draws a 5-point star polygon representing a round victory badge.
+
+    :param surf: Targeted window context surface.
+    :param cx: Center position horizontal mapping point.
+    :param cy: Center position vertical mapping point.
+    :param r: Outer bounding radius.
+    :param col: RGB tuple value specifying star tinting.
+    """
     pts = []
     for i in range(10):
         ang = -math.pi / 2 + i * math.pi / 5
@@ -278,6 +370,15 @@ def draw_star(surf, cx, cy, r, col):
 
 
 def draw_hud(surf, fonts, st, my_pid):
+    """
+    Renders top overlay match metrics including points scored, active survival alerts, 
+    round progression states, and game configuration speed increments.
+
+    :param surf: Canvas surface instance.
+    :param fonts: Tuple dictionary reference to loaded standard text fonts.
+    :param st: The state dictionary unpacked from network reads.
+    :param my_pid: Integer detailing local terminal identification index mapping.
+    """
     font, big, tiny = fonts
     players = st.get('players', [])
     wins = st.get('wins', [0, 0])
@@ -318,6 +419,15 @@ def draw_hud(surf, fonts, st, my_pid):
 
 # ─── Drawing: Splash Screen ──────────────────────────────────────────────────
 def draw_splash(surf, fonts, my_pid, ft):
+    """
+    Draws the main interactive title overlay prior to multiplayer synchronization activation. 
+    Shows control options, user client ID layout setups, and animated star fields.
+
+    :param surf: Canvas context.
+    :param fonts: Bundle collection of active system text objects.
+    :param my_pid: Assigned player index if parsed, else None if buffering.
+    :param ft: Continual execution system tick tracking count.
+    """
     font, big, tiny = fonts
     surf.fill((18, 12, 32))
     rng = random.Random(42)
@@ -374,12 +484,27 @@ def draw_splash(surf, fonts, my_pid, ft):
 
 # ─── Drawing: Overlay Panels ─────────────────────────────────────────────────
 def _overlay(surf, alpha=160):
+    """
+    Blits a full screen transparent black canvas layer to dim background visuals 
+    and make modal text windows readable.
+
+    :param surf: Canvas background target context.
+    :param alpha: Transparency opacity integer bounds (0-255).
+    """
     ov = pygame.Surface((W, H), pygame.SRCALPHA)
     ov.fill((0, 0, 0, alpha))
     surf.blit(ov, (0, 0))
 
 
 def draw_round_end(surf, fonts, st):
+    """
+    Renders the intermediary scoreboard menu overlay once an active round terminates.
+    Displays round metrics, winner announcement, and match status summaries.
+
+    :param surf: Window drawing platform.
+    :param fonts: Reference tuple array tracking configuration fonts.
+    :param st: Received state telemetry payload data map.
+    """
     font, big, tiny = fonts
     _overlay(surf, 145)
 
@@ -418,6 +543,13 @@ def draw_round_end(surf, fonts, st):
 
 
 def draw_game_over(surf, fonts, st):
+    """
+    Renders the terminal game over overlay panel celebrating the absolute series match champion.
+
+    :param surf: Current window rendering space surface.
+    :param fonts: Program font collections.
+    :param st: Parsed game object data payload dictionary.
+    """
     font, big, tiny = fonts
     _overlay(surf, 175)
 
@@ -449,6 +581,12 @@ def draw_game_over(surf, fonts, st):
 
 
 def draw_disconnect_screen(surf, fonts):
+    """
+    Draws a specific notification notice covering screens when peer client nodes drop connections.
+
+    :param surf: Render layer background surface object.
+    :param fonts: System text rendering parameters dictionary asset bundle.
+    """
     font, big, tiny = fonts
     _overlay(surf, 190)
 
@@ -463,6 +601,11 @@ def draw_disconnect_screen(surf, fonts):
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 def main():
+    """
+    Primary operational client thread bootstrap function. Initiates server handshakes, 
+    spawns background asynchronous reading threads, configures local Pygame variables, 
+    manages the core frame calculation loop, captures user input actions, and updates visuals.
+    """
     global _player_id
 
     print(f'[client] Connecting to {SERVER_IP}:{PORT}…')
@@ -504,17 +647,14 @@ def main():
     keys_down = set()
     scroll_bg = 0.0
     ft = 0
-
-    # משתנה עזר למניעת ספאם - נשמור את מצב המקשים האחרון ששלחנו
     last_sent_keys = None
 
     running = True
     while running:
         clock.tick(FPS)
 
-        with _lock:
-            current_phase = _latest_st.get(
-                'phase', 'splash') if _latest_st else 'splash'
+        st = _latest_st
+        current_phase = st.get('phase', 'splash') if st else 'splash'
         if current_phase != 'disconnect':
             ft += 1
 
@@ -536,29 +676,21 @@ def main():
         duck = d_key in keys_down
         start = pygame.K_SPACE in keys_down
 
-        # ─── תיקון 1: משיכת הסטטוס מהשרת ובדיקה אם הוא ריק (לפני השליחה!) ───
-        with _lock:
-            st = _latest_st
-
         if st is None:
-            # שחקן 2 עדיין לא התחבר, לא שולחים כלום לשרת! רק מציגים מסך המתנה
             surf.fill((18, 12, 32))
             wait = font.render('Connecting to server…', True, C['grey'])
             surf.blit(wait, (W // 2 - wait.get_width() // 2, H // 2))
             pygame.display.flip()
             continue
 
-        # ─── תיקון 2: שליחת הנתונים לשרת רק אם חל שינוי כלשהו במקשים ───
         current_keys = {'j': jump, 'd': duck, 'start': start}
         if current_keys != last_sent_keys:
-            msg = json.dumps(current_keys).encode() + b'\n'
             try:
-                sock.sendall(msg)
-                last_sent_keys = current_keys  # מעדכנים את המצב האחרון שנשלח בהצלחה
+                send_msg(sock, current_keys)
+                last_sent_keys = current_keys
             except OSError:
                 pass
 
-        # ─── המשך קוד הציור הרגיל ───
         phase = st.get('phase', 'splash')
 
         if phase == 'splash':

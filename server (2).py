@@ -17,10 +17,11 @@ import json
 import time
 import random
 import sys
+import struct
 
 # ─── Screen / World Constants ────────────────────────────────────────────────
 W, H = 900, 450
-GROUND_Y = 345           # y-coordinate of ground surface (pixels from top)
+GROUND_Y = 345
 FPS = 60
 
 # ─── Physics ─────────────────────────────────────────────────────────────────
@@ -30,27 +31,15 @@ JUMP_V = -15.5
 # ─── Game Speed ──────────────────────────────────────────────────────────────
 INIT_SPEED = 5.0
 MAX_SPEED = 13.0
-SPEED_INC = 0.0016        # px per frame² speed increase
+SPEED_INC = 0.0016
 
 # ─── Avalanche ───────────────────────────────────────────────────────────────
-# AVALANCHE DISABLED (The "Lava Wall" will never reach players)
 AVAL_X0 = -9999.0
 AVAL_BASE = 0.0
 AVAL_ACC = 0.0
 
-# PLAYER LAYOUT (P1 is no longer "trapped" by the wall)
-P1_SX, P2_SX = 110, 185
-
-# UPDATED HITBOXES (Cactus style: Taller and Thinner)
-DINO_W = 38
-DINO_H = 52
-DINO_DUCK_H = 26
-
-ROCK_W = 24   # Thinner for Cacti
-ROCK_H = 46   # Taller for Cacti
-
 # ─── Player Layout ───────────────────────────────────────────────────────────
-P1_SX, P2_SX = 110, 175     # fixed screen-x positions
+P1_SX, P2_SX = 110, 175
 
 # ─── Object Sizes ────────────────────────────────────────────────────────────
 DINO_W = 38
@@ -62,7 +51,7 @@ ROCK_H = 38
 
 PTERO_W = 54
 PTERO_H = 26
-PTERO_Y = GROUND_Y - 58   # must duck to avoid
+PTERO_Y = GROUND_Y - 58
 
 EGG_W = 20
 EGG_H = 26
@@ -70,8 +59,65 @@ EGG_H = 26
 PORT = 5555
 
 
+# ─── Network Protocol Helpers ────────────────────────────────────────────────
+def send_msg(sock, data_dict):
+    """
+    Encodes a data dictionary into JSON format, prefixes it with a 4-byte 
+    length header, and sends it completely over the specified network socket.
+
+    :param sock: Target socket destination connection.
+    :param data_dict: Context tracking metric updates to serialize and transmit.
+    """
+    raw_json = json.dumps(data_dict).encode('utf-8')
+    header = struct.pack('!I', len(raw_json))
+    sock.sendall(header + raw_json)
+
+
+def recv_exact(sock, num_bytes):
+    """
+    Blocks until an exact number of bytes is received over a socket. 
+    Prevents errors caused by network data fragmentation.
+
+    :param sock: Active reading socket pipeline stream.
+    :param num_bytes: Integer detailing required buffer sizes.
+    :return: Completed data payload containing the exact bytes requested.
+    """
+    buf = b''
+    while len(buf) < num_bytes:
+        chunk = sock.recv(num_bytes - len(buf))
+        if not chunk:
+            raise OSError("Connection closed")
+        buf += chunk
+    return buf
+
+
+def recv_msg(sock):
+    """
+    Reads the length header and extracts the underlying JSON message string from 
+    a socket, returning it as a native dictionary mapping structure.
+
+    :param sock: Target active pipeline connection.
+    :return: Unpacked data payload dictionary context map, or None if error.
+    """
+    try:
+        header = recv_exact(sock, 4)
+        msg_len = struct.unpack('!I', header)[0]
+        raw_json = recv_exact(sock, msg_len)
+        return json.loads(raw_json.decode('utf-8'))
+    except (OSError, json.JSONDecodeError, struct.error):
+        return None
+
+
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 def rects_overlap(r1, r2):
+    """
+    Executes standard 2D AABB Axis-Aligned Bounding Box calculation to determine 
+    if any collision or intersection occurs between two rectangular entities.
+
+    :param r1: Coordinates tuple representing bounding box 1 (x, y, width, height).
+    :param r2: Coordinates tuple representing bounding box 2 (x, y, width, height).
+    :return: Boolean validation signaling intersection state overlap.
+    """
     x1, y1, w1, h1 = r1
     x2, y2, w2, h2 = r2
     return (x1 < x2 + w2 and x1 + w1 > x2 and
@@ -81,6 +127,13 @@ def rects_overlap(r1, r2):
 # ─── Game Objects ────────────────────────────────────────────────────────────
 class Player:
     def __init__(self, pid, sx):
+        """
+        Initializes individual player state tracking parameters, placement layout metrics, 
+        and ongoing control keys.
+
+        :param pid: Integer index tracking identity (0 for Player 1, 1 for Player 2).
+        :param sx: Constant spawn horizontal point coordinate alignment.
+        """
         self.id = pid
         self.sx = sx
         self.y = float(GROUND_Y)
@@ -88,11 +141,14 @@ class Player:
         self.alive = True
         self.ducking = False
         self.score = 0
-        # inputs written by network thread
         self.inp_jump = False
         self.inp_duck = False
 
     def update(self):
+        """
+        Applies gravitational acceleration physics to positions and handles structural vertical jumping 
+        and crouching states based on the latest input.
+        """
         if not self.alive:
             return
         on_ground = self.y >= GROUND_Y - 1
@@ -106,11 +162,20 @@ class Player:
         self.ducking = self.inp_duck and on_ground
 
     def rect(self):
-        """Axis-aligned bounding box: (left, top, w, h)"""
+        """
+        Computes the current geometric collision rectangle context configuration.
+
+        :return: Tuple parameters mapping out (x, y, width, height).
+        """
         h = DINO_DUCK_H if self.ducking else DINO_H
         return (self.sx, self.y - h, DINO_W, h)
 
     def as_dict(self):
+        """
+        Transforms the player class instance attributes into a lightweight dictionary for network serialization.
+
+        :return: Clean dictionary representation mapping out player metrics.
+        """
         return {
             'id': self.id,
             'sx': self.sx,
@@ -123,8 +188,14 @@ class Player:
 
 class Obstacle:
     def __init__(self, x, kind):
+        """
+        Initializes an obstacle obstacle element (e.g., Ground Rock or airborne Pterodactyl).
+
+        :param x: Float specifying initialization horizontal spacing coordinate.
+        :param kind: String description labeling structure configurations ('rock' or 'ptero').
+        """
         self.x = float(x)
-        self.kind = kind        # 'rock' or 'ptero'
+        self.kind = kind
         if kind == 'rock':
             self.y = GROUND_Y - ROCK_H
             self.w, self.h = ROCK_W, ROCK_H
@@ -133,51 +204,78 @@ class Obstacle:
             self.w, self.h = PTERO_W, PTERO_H
 
     def as_dict(self):
+        """
+        Packages obstacle attributes into a structured format suitable for message packets.
+
+        :return: Data schema tracking coordinate positioning configuration variables.
+        """
         return {'x': round(self.x, 1), 'y': self.y,
                 'w': self.w, 'h': self.h, 'kind': self.kind}
 
 
 class Egg:
     def __init__(self, x):
+        """
+        Spawns a collectible egg point component at a specific coordinate tracking distance location.
+
+        :param x: Base float axis placement marker coordinate.
+        """
         self.x = float(x)
         self.y = GROUND_Y - EGG_H
         self.taken = [False, False]
 
     def as_dict(self):
+        """
+        Converts the egg instance into a map structure detailing configuration parameters.
+
+        :return: Object serialization parameters tracker tracking current state parameters.
+        """
         return {'x': round(self.x, 1), 'y': self.y,
                 'w': EGG_W, 'h': EGG_H, 'taken': self.taken[:]}
 
 
 # ─── Game State Machine ───────────────────────────────────────────────────────
 class Game:
-    """All game logic lives here; completely independent of networking."""
-
     def __init__(self):
+        """
+        Initializes the top-level server match state machine, scoreboard configurations, 
+        and structural state records.
+        """
         self.wins = [0, 0]
         self.round_num = 0
-        self.phase = 'splash'  # splash | playing | round_end | game_over | disconnect
+        self.phase = 'splash'
         self._init_round()
 
-    # ── Round Management ─────────────────────────────────────────────────────
     def _init_round(self):
+        """
+        Resets and clears round-specific tracking states, emptying lists for hazards/collectibles 
+        and initializing placement coordinates.
+        """
         self.players = [Player(0, P1_SX), Player(1, P2_SX)]
         self.obstacles = []
         self.eggs = []
         self.speed = INIT_SPEED
         self.aval_x = AVAL_X0
         self.frame = 0
-        self.delay = 0          # countdown timer (frames)
-        # Spawn timers (distance remaining until next spawn, in px)
+        self.delay = 0
         self.next_obs = float(random.randint(320, 520))
         self.next_egg = float(random.randint(250, 450))
 
     def start_round(self):
+        """
+        Triggers transitions to activate core physics tick computations, clearing past tracking buffers 
+        and advancing phase metrics.
+        """
         self._init_round()
         self.phase = 'playing'
         self.round_num += 1
 
-    # ── Main Update (called every frame) ─────────────────────────────────────
     def update(self):
+        """
+        Executes the main server-side game logic frame tick. Simulates obstacle movement, 
+        procedurally generates map hazards, updates character positions, checks for entity collisions, 
+        and manages score updates and round termination delays.
+        """
         if self.phase in ('splash', 'disconnect'):
             return
 
@@ -186,20 +284,18 @@ class Game:
             if self.delay <= 0:
                 if self.phase == 'round_end':
                     self.start_round()
-                else:           # game_over → restart whole match
+                else:
                     self.wins = [0, 0]
                     self.round_num = 0
                     self._init_round()
                     self.phase = 'splash'
             return
 
-        # ── Advance frame ────────────────────────────────────────────────────
         f = self.frame
         self.frame += 1
         self.speed = min(MAX_SPEED, INIT_SPEED + f * SPEED_INC)
         self.aval_x += AVAL_BASE + f * AVAL_ACC
 
-        # ── Spawn obstacles ──────────────────────────────────────────────────
         self.next_obs -= self.speed
         if self.next_obs <= 0:
             kind = random.choices(
@@ -210,13 +306,11 @@ class Game:
                 self.obstacles.append(Obstacle(spawn + ROCK_W + 18, 'rock'))
             self.next_obs = float(random.randint(230, 500))
 
-        # ── Spawn eggs ───────────────────────────────────────────────────────
         self.next_egg -= self.speed
         if self.next_egg <= 0:
             self.eggs.append(Egg(W + 60))
             self.next_egg = float(random.randint(200, 420))
 
-        # ── Move objects ─────────────────────────────────────────────────────
         for o in self.obstacles:
             o.x -= self.speed
         for e in self.eggs:
@@ -225,7 +319,6 @@ class Game:
         self.obstacles = [o for o in self.obstacles if o.x > -140]
         self.eggs = [e for e in self.eggs if e.x > -60]
 
-        # ── Update players ───────────────────────────────────────────────────
         for p in self.players:
             p.update()
             if not p.alive:
@@ -252,7 +345,6 @@ class Game:
 
             p.score += 1
 
-        # ── Check round end ──────────────────────────────────────────────────
         alive = [p for p in self.players if p.alive]
         if len(alive) < 2:
             if len(alive) == 1:
@@ -266,8 +358,12 @@ class Game:
                 self.phase = 'round_end'
                 self.delay = FPS * 4
 
-    # ── Serialise state for broadcast ────────────────────────────────────────
     def state(self):
+        """
+        Unpacks entire framework object instances, consolidating attributes into standard Python objects.
+
+        :return: Central state dictionary representing the authoritative game world.
+        """
         return {
             'phase': self.phase,
             'wins': self.wins[:],
@@ -283,47 +379,39 @@ class Game:
 # ─── Networking ──────────────────────────────────────────────────────────────
 game = Game()
 clients = [None, None]
-lock = threading.Lock()
 
 
 def recv_loop(sock, pid):
+    """
+    Asynchronous network listening function attached to every connected client socket. 
+    Continuously listens for incoming keystroke inputs and flags game start activation signals.
+
+    :param sock: Connected communication line mapping to client console target.
+    :param pid: Integer mapping identity tracker (0 or 1).
+    """
     """Background thread: read client input, update game player input."""
-    buf = ''
-    sock.settimeout(2.0)
     while True:
-        try:
-            chunk = sock.recv(512).decode('utf-8', errors='replace')
-            if not chunk:
-                break
-            buf += chunk
-            while '\n' in buf:
-                line, buf = buf.split('\n', 1)
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    msg = json.loads(line)
-                    with lock:
-                        p = game.players[pid]
-                        p.inp_jump = bool(msg.get('j', False))
-                        p.inp_duck = bool(msg.get('d', False))
-                        if game.phase == 'splash' and msg.get('start', False):
-                            game.start_round()
-                except json.JSONDecodeError:
-                    pass
-        except socket.timeout:
-            continue
-        except OSError:
+        msg = recv_msg(sock)
+        if msg is None:
             break
 
+        p = game.players[pid]
+        p.inp_jump = bool(msg.get('j', False))
+        p.inp_duck = bool(msg.get('d', False))
+        if game.phase == 'splash' and msg.get('start', False):
+            game.start_round()
+
     print(f'[server] Player {pid + 1} disconnected.')
-    # שינוי מצב המשחק לניתוק וניקוי השחקן מרשימת הקליינטים
-    with lock:
-        clients[pid] = None
-        game.phase = 'disconnect'
+    clients[pid] = None
+    game.phase = 'disconnect'
 
 
 def main():
+    """
+    Primary operational server thread bootstrap. Generates listening TCP server sockets, 
+    waits for both players to connect, attaches input receiver loop listeners, 
+    and drives the strict 60 FPS state broadcast broadcast pipeline.
+    """
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(('0.0.0.0', PORT))
@@ -336,15 +424,16 @@ def main():
     print(f'║  Host IP  : {local_ip:<28} ║')
     print(f'║  Port     : {PORT:<28} ║')
     print(f'║                                          ║')
-    print(f'║  Waiting for 2 players to connect…      ║')
+    print(f'║  Waiting for 2 players to connect…       ║')
     print(f'╚══════════════════════════════════════════╝')
 
     for pid in range(2):
         conn, addr = srv.accept()
         print(f'[server] Player {pid + 1} connected from {addr[0]}:{addr[1]}')
         clients[pid] = conn
-        hello = json.dumps({'welcome': pid}).encode() + b'\n'
-        conn.sendall(hello)
+
+        send_msg(conn, {'welcome': pid})
+
         t = threading.Thread(target=recv_loop, args=(conn, pid), daemon=True)
         t.start()
 
@@ -354,17 +443,17 @@ def main():
     while True:
         t0 = time.perf_counter()
 
-        with lock:
-            # מריצים עדכון פיזיקה רק אם אף שחקן לא מנותק
-            if game.phase != 'disconnect':
-                game.update()
-            st = game.state()
+        if game.phase != 'disconnect':
+            game.update()
+        st = game.state()
 
-        msg = json.dumps(st).encode() + b'\n'
+        raw_json = json.dumps(st).encode('utf-8')
+        packet = struct.pack('!I', len(raw_json)) + raw_json
+
         for c in clients:
             if c:
                 try:
-                    c.sendall(msg)
+                    c.sendall(packet)
                 except OSError:
                     pass
 
